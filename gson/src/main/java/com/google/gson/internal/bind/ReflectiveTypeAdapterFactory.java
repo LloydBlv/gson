@@ -21,6 +21,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.google.gson.TypeAdapter;
 import com.google.gson.TypeAdapterFactory;
+import com.google.gson.annotations.DataWrapper;
 import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.internal.$Gson$Types;
@@ -108,6 +109,7 @@ public final class ReflectiveTypeAdapterFactory implements TypeAdapterFactory {
     final boolean isPrimitive = Primitives.isPrimitive(fieldType.getRawType());
     // special casing primitives here saves ~5% on Android...
     JsonAdapter annotation = field.getAnnotation(JsonAdapter.class);
+
     TypeAdapter<?> mapped = null;
     if (annotation != null) {
       mapped = jsonAdapterFactory.getTypeAdapter(
@@ -117,7 +119,7 @@ public final class ReflectiveTypeAdapterFactory implements TypeAdapterFactory {
     if (mapped == null) mapped = context.getAdapter(fieldType);
 
     final TypeAdapter<?> typeAdapter = mapped;
-    return new ReflectiveTypeAdapterFactory.BoundField(name, serialize, deserialize) {
+    return new ReflectiveTypeAdapterFactory.BoundField(name, serialize, deserialize, field.isAnnotationPresent(DataWrapper.class)) {
       @SuppressWarnings({"unchecked", "rawtypes"}) // the type adapter and field type always agree
       @Override void write(JsonWriter writer, Object value)
           throws IOException, IllegalAccessException {
@@ -183,11 +185,12 @@ public final class ReflectiveTypeAdapterFactory implements TypeAdapterFactory {
     final String name;
     final boolean serialized;
     final boolean deserialized;
-
-    protected BoundField(String name, boolean serialized, boolean deserialized) {
+    final boolean isDataWrapper;
+    protected BoundField(String name, boolean serialized, boolean deserialized, final boolean isDataWrapper) {
       this.name = name;
       this.serialized = serialized;
       this.deserialized = deserialized;
+      this.isDataWrapper = isDataWrapper;
     }
     abstract boolean writeField(Object value) throws IOException, IllegalAccessException;
     abstract void write(JsonWriter writer, Object value) throws IOException, IllegalAccessException;
@@ -213,13 +216,23 @@ public final class ReflectiveTypeAdapterFactory implements TypeAdapterFactory {
 
       try {
         in.beginObject();
+
         while (in.hasNext()) {
           String name = in.nextName();
           BoundField field = boundFields.get(name);
+
+          if (field != null && field.isDataWrapper) {
+            in.beginObject();
+            in.nextName();
+          }
           if (field == null || !field.deserialized) {
             in.skipValue();
           } else {
             field.read(in, instance);
+
+            if (field.isDataWrapper) {
+              in.endObject();
+            }
           }
         }
       } catch (IllegalStateException e) {
